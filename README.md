@@ -115,6 +115,55 @@ SPOKE (OKD Azure)
 
 ---
 
+## 🎯 Target Architecture vs Lab Validation Strategy
+
+Ce projet documente deux niveaux d'architecture : la **cible enterprise** (ce qu'on déploierait en mission) et la **configuration de validation** (ce qui est effectivement testé dans ce homelab).
+
+### Target Architecture — Enterprise (2 clusters HA)
+
+```
+HUB — OKD SNO (homelab)
+└── Hive ClusterPool "azure-okd-pool"
+     ├── SPOKE 1 — OKD HA Cluster A (Azure westeurope)
+     │    ├── 3 masters  Standard_D8s_v3  ON-DEMAND
+     │    └── 2 workers  Standard_D4s_v3  Spot
+     └── SPOKE 2 — OKD HA Cluster B (Azure westeurope)
+          ├── 3 masters  Standard_D8s_v3  ON-DEMAND
+          └── 2 workers  Standard_D4s_v3  Spot
+
+Coût estimé : ~$400/mois (clusters actifs en permanence)
+Cas d'usage  : production enterprise, lifecycle management réel
+```
+
+### Lab Validation Strategy — OKD SNO Spoke (~$1.50/session)
+
+```
+HUB — OKD SNO (homelab)
+└── Hive ClusterDeployment "azure-okd-sno-spoke"
+     └── SPOKE — OKD SNO (Azure westeurope)
+          └── 1 VM  Standard_D8s_v3  ON-DEMAND (masters = pas de Spot)
+              Provisioning ~45min → test → screenshots → destroy
+
+Coût estimé : ~$1.50 par session de validation (3h)
+Raison      : valider le concept Hive IPI end-to-end sans coût récurrent
+```
+
+> **Pourquoi pas Spot pour les masters ?**
+> Les masters OKD portent le control plane (etcd + API server). Une éviction Azure Spot
+> = cluster mort immédiatement. Les masters doivent impérativement tourner en ON-DEMAND.
+
+> **Pourquoi pas k3s ou MicroShift comme spoke ?**
+> Hive gère des clusters OpenShift/OKD natifs. Les SyncSets utilisent des APIs OpenShift
+> (SCCs, Routes, Groups) qui n'existent pas sur Kubernetes générique. Un spoke k3s
+> donnerait une démo partielle et trompeuse.
+
+> **Pourquoi SNO et pas HA pour la validation ?**
+> L'objectif est de valider le workflow Hive IPI end-to-end (ClusterDeployment → provisioning
+> → SyncSets → ArgoCD). Un cluster SNO suffit pour cette validation. La topologie HA
+> est documentée dans les manifests `clusterpools/azure-ha-pool.yaml`.
+
+---
+
 ## 🗺️ Project Phases
 
 ```
@@ -122,18 +171,18 @@ Phase 1          Phase 2          Phase 3          Phase 4          Phase 5
 ────────         ────────         ────────         ────────         ────────
 Hive             ClusterPool      Day-2            ArgoCD           Vault
 Operator    →    Azure        →   SyncSets     →   ApplicationSet → Integration
-Bootstrap        ClusterClaim     (policies)        (cluster gen)   (cloud creds)
-
+Bootstrap        ClusterDeploy    (policies)        (cluster gen)   (cloud creds)
+                 SNO spoke
 🔜 Planned       🔜 Planned       🔜 Planned       🔜 Planned       🔜 Planned
 ```
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| **Phase 1** | Hive operator deployment via ArgoCD on OKD SNO | 🔜 Planned |
-| **Phase 2** | ClusterPool Azure — 2 clusters Spot + ClusterClaim lifecycle | 🔜 Planned |
-| **Phase 3** | Day-2 via SyncSets — Kyverno policies + RBAC | 🔜 Planned |
-| **Phase 4** | ArgoCD ApplicationSet avec cluster generator | 🔜 Planned |
-| **Phase 5** | Vault integration — Azure credentials + PKI | 🔜 Planned |
+| Phase | Description | Config validée | Status |
+|-------|-------------|----------------|--------|
+| **Phase 1** | Hive operator deployment via ArgoCD on OKD SNO | Homelab ($0) | 🔜 Planned |
+| **Phase 2** | ClusterDeployment Azure SNO — validation IPI end-to-end | Azure SNO (~$1.50) | 🔜 Planned |
+| **Phase 3** | Day-2 via SyncSets — Kyverno policies + RBAC | Azure SNO (même session) | 🔜 Planned |
+| **Phase 4** | ArgoCD ApplicationSet avec cluster generator | Azure SNO (même session) | 🔜 Planned |
+| **Phase 5** | Vault integration — Azure credentials + PKI | Homelab ($0) | 🔜 Planned |
 
 ---
 
@@ -215,8 +264,20 @@ OKD release images                    NetworkPolicies (via SyncSets)
 | HashiCorp Vault | 0.28.0 | Already deployed ✅ |
 | Keycloak | - | Already deployed ✅ |
 | Hive Operator | v1.x | Deployed in Phase 1 |
-| Azure subscription | Pay-As-You-Go | West Europe, Spot VMs |
+| Azure subscription | Pay-As-You-Go | West Europe — ON-DEMAND for masters |
 | OC CLI | 4.15 | `oc` and `kubectl` |
+
+### 💰 Cost Summary
+
+| Environnement | Usage | Coût estimé |
+|---|---|---|
+| Homelab OKD SNO | Phases 1, 5 | $0 |
+| Azure OKD SNO spoke | 1 session ~3h (Phases 2-4) | ~$1.50 |
+| **Total projet** | | **~$1.50** |
+
+> Les manifests `clusterpools/azure-ha-pool.yaml` documentent la configuration HA enterprise
+> (2 clusters × 3 masters + 2 workers) sans provisionnement continu (coût ~$400/mois).
+> La validation IPI end-to-end est réalisée via un cluster SNO éphémère (~3h, destroy immédiat).
 
 ---
 
