@@ -10,64 +10,130 @@
 
 ---
 
-## 📐 Architecture Overview
+## 📐 Architecture Overview — Hub and Spoke
+
+Ce projet implémente le pattern **Hub and Spoke** : l'OKD SNO homelab est le **hub** (management cluster), les clusters OKD provisionnés sur Azure sont les **spokes** (workload clusters autonomes).
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  HUB — OKD SNO (homelab)                        │
+│                  sno-master @ 192.168.241.10                    │
+│                                                                 │
+│  ┌───────────┐  ┌───────────┐  ┌──────────┐  ┌─────────────┐  │
+│  │  ArgoCD   │  │   Hive    │  │  Vault   │  │  Keycloak   │  │
+│  │ Community │  │ Operator  │  │  v0.28.0 │  │  OIDC SSO   │  │
+│  └─────┬─────┘  └─────┬─────┘  └────┬─────┘  └─────────────┘  │
+│        │              │             │                           │
+│        │ GitOps       │ IPI         │ secrets injection         │
+└────────┼──────────────┼─────────────┼───────────────────────────┘
+         │              │             │
+         │              │ Azure API   │
+         │    ┌──────────┴──────┐     │
+         │    │                 │     │
+         ▼    ▼                 ▼     │
+┌──────────────────┐   ┌──────────────────┐
+│   SPOKE 1        │   │   SPOKE 2        │
+│   OKD Cluster A  │   │   OKD Cluster B  │
+│   Azure westeurope│  │   Azure westeurope│
+│                  │   │                  │
+│   ┌────────────┐ │   │   ┌────────────┐ │
+│   │  masters   │ │   │   │  masters   │ │
+│   │  (3 VMs)   │ │   │   │  (3 VMs)   │ │
+│   ├────────────┤ │   │   ├────────────┤ │
+│   │  workers   │ │   │   │  workers   │ │
+│   │  (Spot)    │ │   │   │  (Spot)    │ │
+│   └────────────┘ │   │   └────────────┘ │
+│                  │   │                  │
+│  ◄─ SyncSets ──► │   │  ◄─ SyncSets ──► │
+│  ◄─ ArgoCD   ──► │   │  ◄─ ArgoCD   ──► │
+└──────────────────┘   └──────────────────┘
+  Autonome ✅                Autonome ✅
+  (survit si hub OFF)        (survit si hub OFF)
+```
+
+---
+
+## 🔄 Le pattern Hub and Spoke
+
+Le hub **ne fait tourner aucune application métier**. Son seul rôle est de **gérer les spokes** :
+
+```
+HUB (OKD SNO homelab)
+│
+├── Hive      → crée / détruit / hiberne les clusters spokes
+├── ArgoCD    → déploie les apps sur les spokes via ApplicationSet
+├── Vault     → distribue les secrets aux spokes
+└── Keycloak  → SSO centralisé pour tous les spokes
+
+SPOKE (OKD Azure)
+│
+├── Reçoit ses configs depuis le HUB (SyncSets, ArgoCD)
+├── Tourne tout seul si le HUB s'éteint  ✅
+└── Ne connait pas les autres spokes
+```
+
+> **Analogie** : le HUB est la tour de contrôle aéroportuaire — elle donne les instructions.
+> Les SPOKEs sont les avions — ils volent de façon autonome mais obéissent à la tour.
+
+---
+
+## 🔀 Hive vs HyperShift — deux approches du hub and spoke
+
+*Voir [ADR-001 — Hive vs HyperShift](docs/adr/ADR-001-hive-vs-hypershift.md) pour la décision complète.*
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│              MANAGEMENT CLUSTER — OKD SNO (homelab)         │
-│                                                             │
-│  ┌───────────┐  ┌───────────┐  ┌──────────┐  ┌─────────┐  │
-│  │  ArgoCD   │  │   Hive    │  │  Vault   │  │Keycloak │  │
-│  │ Community │  │ Operator  │  │  Helm    │  │  OIDC   │  │
-│  └─────┬─────┘  └─────┬─────┘  └──────────┘  └─────────┘  │
-│        │              │                                     │
-│        │ GitOps       │ ClusterDeployment / ClusterPool     │
-└────────┼──────────────┼─────────────────────────────────────┘
-         │              │
-         │              │ OpenShift Installer (IPI)
-         ▼              ▼
-┌──────────────────────────────────────────────────┐
-│          TARGET CLUSTERS — Azure / AWS           │
-│                                                  │
-│  ┌────────────────┐    ┌────────────────┐        │
-│  │  OKD Cluster A │    │  OKD Cluster B │  ...   │
-│  │  (full stack)  │    │  (full stack)  │        │
-│  │  masters+workers    │  masters+workers        │
-│  └────────────────┘    └────────────────┘        │
-│                                                  │
-│  ◄── SyncSets (Kyverno, RBAC, NetworkPolicies) ──►
-└──────────────────────────────────────────────────┘
+│              OKD SNO (homelab) = HUB commun                 │
+└───────────────────────┬─────────────────────────────────────┘
+                        │
+           ┌────────────┴────────────┐
+           │                         │
+           ▼                         ▼
+┌─────────────────────┐   ┌──────────────────────┐
+│    HIVE (ce projet) │   │ HYPERSHIFT (companion)│
+│                     │   │                       │
+│  Spokes = vrais     │   │  Spokes = Hosted      │
+│  clusters OKD       │   │  Control Planes       │
+│  sur Azure          │   │  (pods sur le hub)    │
+│  (masters + workers)│   │  + workers Azure      │
+│                     │   │                       │
+│  Cluster AUTONOME ✅│   │  Cluster dépendant ❌ │
+│  Survit si hub OFF  │   │  du hub pour le CP    │
+└─────────────────────┘   └──────────────────────┘
+  → Enterprise lifecycle     → Dev/test, densité
+    management                 multi-tenancy
 ```
 
-### Key Design Decisions
-
-- **Management cluster reuse** — OKD SNO homelab already running ArgoCD + Vault + Keycloak (phases 2a/2b from `Openshift-OKD-SNO-Airgap-workstation`)
-- **Hive overhead is minimal** — ~600MB–1GB on management cluster (6 pods), all provisioning workloads run on cloud VMs
-- **GitOps-first** — Hive operator and all ClusterDeployments managed via ArgoCD Applications
-- **Vault for secrets** — AWS/Azure credentials stored in Vault, injected via Agent Sidecar into Hive provisioner pods
-- **Full cluster autonomy** — target clusters are independent OKD installs; management cluster outage does not affect them
-
-### Hive vs HyperShift (companion project)
-
-| | **This project (Hive)** | [okd-hypershift-security-platform](https://github.com/Z3ROX-lab/okd-hypershift-security-platform) |
+| | **Hive (ce projet)** | **HyperShift** |
 |---|---|---|
-| Target cluster | Autonomous, full OKD stack | Hosted Control Plane (pods) |
-| Cloud cost | Higher (masters + workers) | Lower (workers only) |
-| Survives mgmt outage | ✅ Yes | ❌ No |
-| Use case | Enterprise lifecycle management | Dev/test, multi-tenancy density |
-| Provisioning time | ~30–45 min (IPI) | ~5 min |
+| Cluster cible | Autonome, full OKD stack | Hosted Control Plane (pods) |
+| Azure workload | Masters + workers | Workers uniquement |
+| Survie si hub OFF | ✅ Oui | ❌ Non |
+| Coût cloud | Plus élevé | Faible |
+| Provisioning | ~30–45 min (IPI) | ~5 min |
+| Cas d'usage | Enterprise lifecycle | Dev/test, densité |
 
 ---
 
 ## 🗺️ Project Phases
 
+```
+Phase 1          Phase 2          Phase 3          Phase 4          Phase 5
+────────         ────────         ────────         ────────         ────────
+Hive             ClusterPool      Day-2            ArgoCD           Vault
+Operator    →    Azure        →   SyncSets     →   ApplicationSet → Integration
+Bootstrap        ClusterClaim     (policies)        (cluster gen)   (cloud creds)
+
+🔜 Planned       🔜 Planned       🔜 Planned       🔜 Planned       🔜 Planned
+```
+
 | Phase | Description | Status |
 |-------|-------------|--------|
 | **Phase 1** | Hive operator deployment via ArgoCD on OKD SNO | 🔜 Planned |
-| **Phase 2** | ClusterPool on Azure/AWS — ClusterClaim lifecycle | 🔜 Planned |
+| **Phase 2** | ClusterPool Azure — 2 clusters Spot + ClusterClaim lifecycle | 🔜 Planned |
 | **Phase 3** | Day-2 via SyncSets — Kyverno policies + RBAC | 🔜 Planned |
-| **Phase 4** | ArgoCD ApplicationSet with cluster generator | 🔜 Planned |
-| **Phase 5** | Vault integration — cloud credentials + PKI | 🔜 Planned |
+| **Phase 4** | ArgoCD ApplicationSet avec cluster generator | 🔜 Planned |
+| **Phase 5** | Vault integration — Azure credentials + PKI | 🔜 Planned |
 
 ---
 
@@ -77,13 +143,21 @@
 openshift-okd-hive-multicluster-platform/
 │
 ├── README.md
-├── ARCHITECTURE.md
 ├── SECURITY.md
+│
+├── docs/
+│   ├── adr/
+│   │   └── ADR-001-hive-vs-hypershift.md
+│   ├── phase1-hive-bootstrap.md
+│   ├── phase2-clusterpool.md
+│   ├── phase3-syncsets.md
+│   ├── phase4-applicationset.md
+│   └── phase5-vault-integration.md
 │
 ├── argocd/
 │   └── applications/
-│       ├── hive.yaml                    # Hive operator Application
-│       └── clusterpools.yaml            # ClusterPool Application
+│       ├── hive.yaml
+│       └── clusterpools.yaml
 │
 ├── manifests/
 │   ├── hive/
@@ -91,33 +165,43 @@ openshift-okd-hive-multicluster-platform/
 │   │   ├── 02-hiveconfig.yaml
 │   │   └── values.yaml
 │   ├── clusterpools/
-│   │   ├── azure-pool.yaml              # ClusterPool Azure
-│   │   ├── aws-pool.yaml                # ClusterPool AWS
-│   │   └── cluster-imageset.yaml        # OKD 4.15 release image
+│   │   ├── azure-pool.yaml
+│   │   └── cluster-imageset.yaml
 │   ├── clusterdeployments/
-│   │   └── example-deployment.yaml
+│   │   └── example-claim.yaml
 │   └── syncsets/
-│       ├── kyverno-policies.yaml        # Day-2 policies poussées sur les clusters
+│       ├── kyverno-policies.yaml
 │       ├── rbac-baseline.yaml
 │       └── networkpolicies.yaml
 │
 ├── applicationsets/
-│   └── multicluster-apps.yaml           # ArgoCD ApplicationSet + cluster generator
+│   └── multicluster-apps.yaml
 │
 ├── vault/
 │   └── policies/
-│       ├── hive-azure-policy.hcl
-│       └── hive-aws-policy.hcl
-│
-├── docs/
-│   ├── phase1-hive-bootstrap.md
-│   ├── phase2-clusterpool.md
-│   ├── phase3-syncsets.md
-│   ├── phase4-applicationset.md
-│   └── phase5-vault-integration.md
+│       └── hive-azure-policy.hcl
 │
 └── screenshots/
-    └── (portfolio screenshots per phase)
+```
+
+---
+
+## 🔐 Security Highlights
+
+```
+Management cluster (HUB)              Spokes (Azure clusters)
+────────────────────────              ───────────────────────
+Vault                                 Kyverno policies (via SyncSets)
+└── Azure SP credentials              ├── deny privileged pods
+    injectés dans Hive pods           ├── restrict image registries
+    (zéro secret en clair Git)        └── require resource limits
+
+ArgoCD                                RBAC (via SyncSets)
+└── GitOps-only, OIDC Keycloak        └── least-privilege ClusterRoles
+
+OKD release images                    NetworkPolicies (via SyncSets)
+└── pinned digests via                └── deny-all + allow-ingress
+    ClusterImageSet
 ```
 
 ---
@@ -127,29 +211,23 @@ openshift-okd-hive-multicluster-platform/
 | Component | Version | Notes |
 |---|---|---|
 | OKD SNO | 4.15 | Management cluster (homelab) |
-| ArgoCD Community Operator | v0.17.0 | Already deployed |
-| HashiCorp Vault | 0.28.0 | Already deployed (dev mode) |
+| ArgoCD Community Operator | v0.17.0 | Already deployed ✅ |
+| HashiCorp Vault | 0.28.0 | Already deployed ✅ |
+| Keycloak | - | Already deployed ✅ |
 | Hive Operator | v1.x | Deployed in Phase 1 |
-| Azure subscription | - | Spot VMs Standard_D4s_v3 |
+| Azure subscription | Pay-As-You-Go | West Europe, Spot VMs |
 | OC CLI | 4.15 | `oc` and `kubectl` |
-
----
-
-## 🔐 Security Highlights
-
-- **Zero hardcoded credentials** — all cloud secrets managed by Vault
-- **Kyverno SyncSets** — baseline policies (privileged pod deny, image registry restriction) pushed to all provisioned clusters
-- **RBAC SyncSets** — least-privilege ClusterRoles synced automatically
-- **Supply chain** — OKD release images verified via `ClusterImageSet` with pinned digests
-- **Network isolation** — provisioned clusters use dedicated VNets/VPCs with restricted ingress
 
 ---
 
 ## 📚 Related Projects
 
-- [`Openshift-OKD-SNO-Airgap-workstation`](https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation) — Management cluster base (ArgoCD + Vault + Keycloak)
-- [`okd-hypershift-security-platform`](https://github.com/Z3ROX-lab/okd-hypershift-security-platform) — HyperShift Hosted Control Planes (companion project)
-- [`ai-security-platform`](https://github.com/Z3ROX-lab/ai-security-platform) — AI Security Platform on K3d
+| Projet | Description |
+|---|---|
+| [`Openshift-OKD-SNO-Airgap-workstation`](https://github.com/Z3ROX-lab/Openshift-OKD-SNO-Airgap-workstation) | Management cluster base (ArgoCD + Vault + Keycloak) |
+| [`okd-hypershift-security-platform`](https://github.com/Z3ROX-lab/okd-hypershift-security-platform) | HyperShift — Hosted Control Planes sur Azure (companion) |
+| [`okd-sno-supply-chain`](https://github.com/Z3ROX-lab/okd-sno-supply-chain) | Supply chain security (Cosign + Trivy + Harbor) |
+| [`ai-security-platform`](https://github.com/Z3ROX-lab/ai-security-platform) | AI Security Platform on K3d |
 
 ---
 
@@ -158,8 +236,8 @@ openshift-okd-hive-multicluster-platform/
 **Stéphane Seloi (Z3ROX)** — Cloud Native Security Architect / Platform Security Engineer
 - 20+ years in telecom & cloud infrastructure
 - CCSP | AWS Solutions Architect | ISO 27001 Lead Implementer
-- [GitHub: Z3ROX-lab](https://github.com/Z3ROX-lab)
+- [GitHub: Z3ROX-lab](https://github.com/Z3ROX-lab) | [Medium: @Z3R0X](https://medium.com/@Z3R0X)
 
 ---
 
-*This project is part of a portfolio demonstrating enterprise-grade multi-cluster management capabilities for freelance Cloud Native Security Architect missions (750–850€/day).*
+*This project is part of a portfolio demonstrating enterprise-grade multi-cluster management capabilities for freelance Cloud Native Security Architect missions (750–850€/day, Île-de-France).*
