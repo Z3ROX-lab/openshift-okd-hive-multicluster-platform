@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hive
+  namespace: openshift-operators
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Z3ROX-lab/openshift-okd-hive-multicluster-platform.git
+    targetRevision: master
+    path: manifests/hive
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: hive
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: false
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
