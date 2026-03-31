@@ -65,3 +65,19 @@ subjects:
 - kind: ServiceAccount
   name: hive-operator
   namespace: hive
+---
+# cluster-admin requis pour hive-operator lors d'install via Kustomize (sans OLM)
+# OLM le fait automatiquement via le bundle
+# Ref: https://github.com/openshift/hive/issues/
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hive-operator-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: hive-operator
+  namespace: hive
