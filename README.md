@@ -196,7 +196,10 @@ openshift-okd-hive-multicluster-platform/
 │
 ├── docs/
 │   ├── adr/
-│   │   └── ADR-001-hive-vs-hypershift.md
+│   │   ├── ADR-001-hive-vs-hypershift.md
+│   │   ├── ADR-002-hypershift-multiplatform-ha.md
+│   │   └── ADR-003-hive-provisioning-methods.md
+│   ├── argocd-components.md
 │   ├── phase1-hive-bootstrap.md
 │   ├── phase2-clusterpool.md
 │   ├── phase3-syncsets.md
@@ -289,6 +292,8 @@ OKD release images                    NetworkPolicies (via SyncSets)
 | [`okd-hypershift-security-platform`](https://github.com/Z3ROX-lab/okd-hypershift-security-platform) | HyperShift — Hosted Control Planes sur Azure (companion) |
 | [`okd-sno-supply-chain`](https://github.com/Z3ROX-lab/okd-sno-supply-chain) | Supply chain security (Cosign + Trivy + Harbor) |
 | [`ai-security-platform`](https://github.com/Z3ROX-lab/ai-security-platform) | AI Security Platform on K3d |
+| [`docs/adr/`](docs/adr/) | ADR-001 Hive vs HyperShift, ADR-002 HyperShift HA, ADR-003 Hive Provisioning Methods |
+| [`docs/argocd-components.md`](docs/argocd-components.md) | ArgoCD components, Dex SSO flow, cluster targeting, spoke SSO patterns |
 
 ---
 
