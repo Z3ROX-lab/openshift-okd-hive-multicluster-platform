@@ -5,3 +5,5 @@ metadata:
 spec:
   logLevel: info
   targetNamespace: hive
+  globalPullSecretRef:
+    name: global-pull-secret
