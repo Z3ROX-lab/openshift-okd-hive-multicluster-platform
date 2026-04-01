@@ -164,6 +164,111 @@ Raison      : valider le concept Hive IPI end-to-end sans coût récurrent
 
 ---
 
+
+## 🔁 ClusterDeployment vs ClusterPool — Quand utiliser quoi ?
+
+Hive propose deux approches pour provisionner des clusters spokes. Ce projet utilise les deux :
+
+```
+CLUSTERDEPLOYMENT — 1 cluster spécifique
+──────────────────────────────────────────
+ClusterDeployment "okd-sno-spoke"
+└── provisionne 1 cluster SNO sur Azure
+     ├── create → provisionne (~45 min)
+     └── delete → destroy immédiat
+
+Usage  : validation IPI end-to-end (~$1.50/session)
+Contrôle : total — tu décides quand ça tourne
+
+
+CLUSTERPOOL — N clusters pré-provisionnés
+──────────────────────────────────────────
+ClusterPool "azure-okd-pool"
+├── Cluster A  ← hiberné, prêt à l'emploi
+└── Cluster B  ← hiberné, prêt à l'emploi
+
+ClusterClaim "dev-cluster"
+└── réveille 1 cluster du pool
+     └── lifetime: 8h → destroy auto
+
+Usage  : équipes dev/test, clusters à la demande
+Coût   : clusters toujours provisionnés $$
+         (documenté dans clusterpools/azure-ha-pool.yaml)
+```
+
+---
+
+## 🔄 Lifecycle complet — ClusterDeployment → SyncSets → ArgoCD ApplicationSet
+
+C'est le cœur de ce projet : **3 mécanismes complémentaires** pour gérer le cycle de vie complet d'un spoke.
+
+```
+PHASE 2 — Hive provisionne le spoke
+─────────────────────────────────────────────────────────────
+ClusterDeployment CR appliqué
+         │
+         ▼
+Hive appelle OpenShift Installer (IPI)
+         │
+         ▼
+OKD SNO provisionné sur Azure (~45 min)
+         │
+         ▼
+Hive crée automatiquement un Secret kubeconfig :
+  metadata:
+    labels:
+      hive.openshift.io/secret-type: kubeconfig
+      argocd.argoproj.io/secret-type: cluster  ← label magique ArgoCD !
+  data:
+    kubeconfig: <base64>
+
+
+PHASE 3 — SyncSets poussent la config Day-2
+─────────────────────────────────────────────────────────────
+SyncSet détecté par Hive → appliqué automatiquement sur le spoke
+
+SyncSet "baseline-security"
+└── pousse sur le spoke :
+     ├── Kyverno ClusterPolicies (deny privileged, restrict registries)
+     ├── RBAC ClusterRoles (least-privilege)
+     ├── NetworkPolicies (deny-all + allow-ingress)
+     └── OAuth config (Keycloak hub → SSO sur le spoke)
+
+→ Zéro intervention manuelle sur le spoke ✅
+→ N clusters = N fois appliqué automatiquement ✅
+
+
+PHASE 4 — ArgoCD ApplicationSet déploie les workloads
+─────────────────────────────────────────────────────────────
+ArgoCD détecte le Secret kubeconfig (label magique)
+         │
+         ▼
+Spoke enregistré comme cluster cible ArgoCD
+         │
+         ▼
+ApplicationSet generator: clusters
+└── génère automatiquement 1 Application par spoke :
+     ├── App "monitoring-spoke"   → déployée sur spoke ✅
+     ├── App "cert-manager-spoke" → déployée sur spoke ✅
+     └── App "security-spoke"    → déployée sur spoke ✅
+
+→ 1 ApplicationSet = N clusters couverts ✅
+→ Nouveau spoke provisionné = apps déployées auto ✅
+```
+
+### Les 3 mécanismes — rôles distincts
+
+```
+ClusterDeployment  = INFRA     (qui provisionne le cluster)
+SyncSets           = CONFIG    (qui configure le cluster Day-2)
+ArgoCD ApplicationSet = APPS   (qui déploie les workloads)
+
+Les 3 ensemble = lifecycle management complet ✅
+= ce que fait ACM/MCE en enterprise Red Hat
+```
+
+---
+
 ## 🗺️ Project Phases
 
 ```
@@ -173,12 +278,12 @@ Hive             ClusterPool      Day-2            ArgoCD           Vault
 Operator    →    Azure        →   SyncSets     →   ApplicationSet → Integration
 Bootstrap        ClusterDeploy    (policies)        (cluster gen)   (cloud creds)
                  SNO spoke
-🔜 Planned       🔜 Planned       🔜 Planned       🔜 Planned       🔜 Planned
+✅ Complete      🔜 Planned       🔜 Planned       🔜 Planned       🔜 Planned
 ```
 
 | Phase | Description | Config validée | Status |
 |-------|-------------|----------------|--------|
-| **Phase 1** | Hive operator deployment via ArgoCD on OKD SNO | Homelab ($0) | 🔜 Planned |
+| **Phase 1** | Hive operator deployment via ArgoCD on OKD SNO | Homelab ($0) | ✅ Complete |
 | **Phase 2** | ClusterDeployment Azure SNO — validation IPI end-to-end | Azure SNO (~$1.50) | 🔜 Planned |
 | **Phase 3** | Day-2 via SyncSets — Kyverno policies + RBAC | Azure SNO (même session) | 🔜 Planned |
 | **Phase 4** | ArgoCD ApplicationSet avec cluster generator | Azure SNO (même session) | 🔜 Planned |
@@ -198,7 +303,9 @@ openshift-okd-hive-multicluster-platform/
 │   ├── adr/
 │   │   ├── ADR-001-hive-vs-hypershift.md
 │   │   ├── ADR-002-hypershift-multiplatform-ha.md
-│   │   └── ADR-003-hive-provisioning-methods.md
+│   │   ├── ADR-003-hive-provisioning-methods.md
+│   │   ├── ADR-004-iam-strategy-keycloak.md
+│   │   └── ADR-005-oidc-brokering-dex-vs-direct.md
 │   ├── argocd-components.md
 │   ├── phase1-hive-bootstrap.md
 │   ├── phase2-clusterpool.md
@@ -214,8 +321,11 @@ openshift-okd-hive-multicluster-platform/
 ├── manifests/
 │   ├── hive/
 │   │   ├── 01-namespace.yaml
-│   │   ├── 02-hiveconfig.yaml
-│   │   └── values.yaml
+│   │   ├── 02-operatorgroup.yaml
+│   │   ├── 03-catalogsource.yaml
+│   │   ├── 04-subscription.yaml
+│   │   ├── 05-hiveconfig.yaml
+│   │   └── 06-rbac-fixes.yaml
 │   ├── clusterpools/
 │   │   ├── azure-pool.yaml
 │   │   └── cluster-imageset.yaml
@@ -258,6 +368,203 @@ OKD release images                    NetworkPolicies (via SyncSets)
 
 ---
 
+
+## ⚙️ Hive — Composants, CRDs et pattern Operator/Controller
+
+### Ce que Hive déploie dans le cluster
+
+```
+namespace: hive
+│
+├── DEPLOYMENTS
+│   ├── hive-operator        ← cerveau de Hive, réconcilie le HiveConfig
+│   ├── hive-controllers     ← réconcilie ClusterDeployment, ClusterPool...
+│   └── hiveadmission (x2)  ← webhook de validation des CRs Hive
+│
+├── STATEFULSETS
+│   ├── hive-clustersync     ← applique les SyncSets sur les spokes
+│   └── hive-machinepool     ← gère les MachinePools des spokes
+│
+└── SERVICES
+    ├── hive-controllers     ← metrics (2112) + pprof (6060)
+    ├── hive-clustersync     ← metrics (2112) + pprof (6060)
+    ├── hive-machinepool     ← metrics (2112) + pprof (6060)
+    └── hiveadmission        ← webhook HTTPS (443)
+```
+
+### Le pattern Operator / Controller / CRD
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  PATTERN KUBERNETES OPERATOR                                │
+│                                                             │
+│  CRD (Custom Resource Definition)                           │
+│  └── "Nouveau type d'objet Kubernetes"                      │
+│       ex: ClusterDeployment, SyncSet, ClusterPool           │
+│                                                             │
+│  CR (Custom Resource)                                       │
+│  └── "Instance du nouveau type"                             │
+│       ex: mon-cluster-azure.ClusterDeployment               │
+│                                                             │
+│  OPERATOR / CONTROLLER                                      │
+│  └── "Surveille les CRs et agit en conséquence"            │
+│       Reconcile loop :                                      │
+│       1. Observe l'état actuel  (cluster Azure existe ?)   │
+│       2. Compare à l'état désiré (ClusterDeployment CR)    │
+│       3. Agit pour converger    (provisionne si manquant)  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Les 21 CRDs Hive — rôles détaillés
+
+```
+PROVISIONING (cycle de vie des clusters)
+─────────────────────────────────────────
+clusterdeployments          ← 1 CR = 1 cluster OKD provisionné
+clusterpools                ← pool de clusters pré-provisionnés
+clusterclaims               ← réclame un cluster d'un pool
+clusterprovisions           ← suivi du provisioning en cours
+clusterdeprovisions         ← suivi du destroy en cours
+clusterimagesets            ← référence l'image OKD release
+clusterrelocates            ← migration d'un cluster vers un autre hub
+clusterstates               ← état courant d'un cluster
+clusterdeploymentcustomizations ← customisation du install-config
+
+DAY-2 OPERATIONS
+─────────────────
+syncsets                    ← ressources à appliquer sur les spokes
+selectorsyncsets            ← syncsets avec sélecteur label
+syncidentityproviders       ← config OAuth à pousser sur les spokes
+selectorsyncidentityproviders
+
+MACHINE MANAGEMENT
+───────────────────
+machinepools                ← pools de nœuds workers à gérer
+machinepoolnameleases       ← gestion des noms de MachinePools
+
+DNS
+────
+dnszones                    ← zones DNS gérées par Hive
+
+CONFIGURATION
+──────────────
+hiveconfigs                 ← configuration globale de Hive (singleton)
+checkpoints                 ← points de sauvegarde Hive
+
+INTERNAL
+─────────
+clustersyncs                ← état de synchro des SyncSets
+clustersyncleases           ← leader election pour clustersync
+fakeclusterinstalls         ← clusters simulés pour tests
+```
+
+### Qui fait quoi — les 5 composants
+
+```
+hive-operator
+─────────────
+Rôle : réconcilie le HiveConfig CR
+       crée/met à jour tous les autres composants Hive
+       gère les RBAC, les deployments, les webhooks
+
+Triggered by : HiveConfig CR modifié
+Action        : crée hive-controllers, hiveadmission,
+                hive-clustersync, hive-machinepool
+
+
+hive-controllers
+─────────────────
+Rôle : cerveau du provisioning
+       réconcilie ClusterDeployment, ClusterPool, ClusterClaim
+       lance openshift-install pour provisionner les clusters
+
+Triggered by : ClusterDeployment / ClusterPool / ClusterClaim CR
+Action        : appelle API Azure/AWS
+                lance un pod "hive-install-manager" éphémère
+                qui exécute openshift-install create cluster
+
+
+hive-clustersync
+─────────────────
+Rôle : applique les SyncSets sur les clusters spokes
+       réconcilie en continu l'état désiré vs réel
+
+Triggered by : SyncSet CR / SelectorsyncSet CR
+Action        : se connecte au kubeconfig du spoke
+                applique/met à jour les ressources définies
+                dans le SyncSet sur le cluster distant
+
+
+hive-machinepool
+─────────────────
+Rôle : gère les MachinePools des clusters spokes
+       scale up/down les workers des spokes
+
+Triggered by : MachinePool CR
+Action        : crée/modifie les MachineSets sur le spoke
+                via le kubeconfig stocké dans un Secret
+
+
+hiveadmission (x2)
+────────────────────
+Rôle : webhook de validation
+       valide les CRs Hive avant qu'elles soient acceptées
+
+Triggered by : kubectl apply / oc apply d'une CR Hive
+Action        : valide le ClusterDeployment (credentials OK ?)
+                valide le SyncSet (format correct ?)
+                → refuse si invalide (erreur immédiate) ✅
+```
+
+### Flow complet — ClusterDeployment → cluster OKD Azure
+
+```
+Tu appliques un ClusterDeployment CR
+         │
+         ▼
+hiveadmission valide le CR ✅
+         │
+         ▼
+hive-controllers détecte le nouveau CR
+         │
+         ▼
+hive-controllers crée un pod éphémère :
+"hive-install-manager-<cluster>"
+         │
+         └── exécute openshift-install create cluster
+              │
+              ├── appelle Azure API (credentials depuis Secret)
+              ├── crée VNet, Subnet, NSG
+              ├── crée VMs masters (Standard_D8s_v3 ON-DEMAND)
+              ├── booste FCOS via Ignition
+              └── cluster OKD SNO prêt (~45 min)
+                       │
+                       ▼
+              hive-controllers stocke le kubeconfig
+              dans un Secret avec label :
+                argocd.argoproj.io/secret-type: cluster
+                       │
+                       ▼
+              hive-clustersync applique les SyncSets
+              sur le nouveau cluster ✅
+                       │
+                       ▼
+              ArgoCD détecte le Secret kubeconfig
+              → enregistre le spoke comme cluster cible
+              → ApplicationSet déploie les apps ✅
+```
+
+### Screenshots — Phase 1 Complete
+
+> **Fig 1** : `oc get all -n hive` — tous les composants Hive Running
+> `docs/screenshots/phase1-hive-all-running.png`
+
+> **Fig 2** : `oc get crd | grep hive` — 21 CRDs installées dont
+> `clusterdeploymentcustomizations.hive.openshift.io`
+> `docs/screenshots/phase1-hive-crds.png`
+
+---
+
 ## 🔧 Prerequisites
 
 | Component | Version | Notes |
@@ -292,7 +599,7 @@ OKD release images                    NetworkPolicies (via SyncSets)
 | [`okd-hypershift-security-platform`](https://github.com/Z3ROX-lab/okd-hypershift-security-platform) | HyperShift — Hosted Control Planes sur Azure (companion) |
 | [`okd-sno-supply-chain`](https://github.com/Z3ROX-lab/okd-sno-supply-chain) | Supply chain security (Cosign + Trivy + Harbor) |
 | [`ai-security-platform`](https://github.com/Z3ROX-lab/ai-security-platform) | AI Security Platform on K3d |
-| [`docs/adr/`](docs/adr/) | ADR-001 Hive vs HyperShift, ADR-002 HyperShift HA, ADR-003 Hive Provisioning Methods |
+| [`docs/adr/`](docs/adr/) | ADR-001→005 : Hive vs HyperShift, HyperShift HA, Hive Provisioning, IAM Keycloak, OIDC Brokering |
 | [`docs/argocd-components.md`](docs/argocd-components.md) | ArgoCD components, Dex SSO flow, cluster targeting, spoke SSO patterns |
 
 ---
