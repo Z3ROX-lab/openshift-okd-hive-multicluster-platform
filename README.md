@@ -307,11 +307,17 @@ openshift-okd-hive-multicluster-platform/
 │   │   ├── ADR-004-iam-strategy-keycloak.md
 │   │   └── ADR-005-oidc-brokering-dex-vs-direct.md
 │   ├── argocd-components.md
-│   ├── phase1-hive-bootstrap.md
-│   ├── phase2-clusterpool.md
-│   ├── phase3-syncsets.md
-│   ├── phase4-applicationset.md
-│   └── phase5-vault-integration.md
+│   ├── adr/
+│   │   ├── ADR-001 → ADR-005
+│   ├── demo/                         ← docs démo avec screenshots
+│   │   ├── phase1-hive-bootstrap.md  ← ✅ Complete
+│   │   ├── phase2-clusterdeployment.md
+│   │   ├── phase3-syncsets.md
+│   │   ├── phase4-applicationset.md
+│   │   └── phase5-vault-integration.md
+│   └── screenshots/
+│       ├── phase1-hive-all-running.png
+│       └── phase1-hive-crds.png
 │
 ├── argocd/
 │   └── applications/
@@ -562,6 +568,27 @@ hive-controllers crée un pod éphémère :
 > **Fig 2** : `oc get crd | grep hive` — 21 CRDs installées dont
 > `clusterdeploymentcustomizations.hive.openshift.io`
 > `docs/screenshots/phase1-hive-crds.png`
+
+---
+
+## 📸 Demo & Screenshots
+
+Chaque phase dispose d'une documentation démo détaillée avec screenshots :
+
+| Phase | Doc démo | Statut |
+|-------|---------|--------|
+| **Phase 1** — Hive Bootstrap | [docs/demo/phase1-hive-bootstrap.md](docs/demo/phase1-hive-bootstrap.md) | ✅ Complete |
+| **Phase 2** — ClusterDeployment Azure | [docs/demo/phase2-clusterdeployment.md](docs/demo/phase2-clusterdeployment.md) | 🔜 Planned |
+| **Phase 3** — SyncSets Day-2 | [docs/demo/phase3-syncsets.md](docs/demo/phase3-syncsets.md) | 🔜 Planned |
+| **Phase 4** — ArgoCD ApplicationSet | [docs/demo/phase4-applicationset.md](docs/demo/phase4-applicationset.md) | 🔜 Planned |
+| **Phase 5** — Vault Integration | [docs/demo/phase5-vault-integration.md](docs/demo/phase5-vault-integration.md) | 🔜 Planned |
+
+### Phase 1 — Aperçu
+
+| Screenshot | Description |
+|-----------|-------------|
+| ![Hive Running](docs/screenshots/phase1-hive-all-running.png) | Tous les pods Hive Running (`oc get all -n hive`) |
+| ![Hive CRDs](docs/screenshots/phase1-hive-crds.png) | 21 CRDs Hive installées (`oc get crd | grep hive`) |
 
 ---
 
