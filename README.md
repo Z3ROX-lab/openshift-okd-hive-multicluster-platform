@@ -284,7 +284,7 @@ Bootstrap        ClusterDeploy    (policies)        (cluster gen)   (cloud creds
 | Phase | Description | Config validée | Status |
 |-------|-------------|----------------|--------|
 | **Phase 1** | Hive operator deployment via ArgoCD on OKD SNO | Homelab ($0) | ✅ Complete |
-| **Phase 2** | ClusterDeployment Azure SNO — validation IPI end-to-end | Azure SNO (~$1.50) | 🔜 Planned |
+| **Phase 2** | ClusterDeployment Azure SNO — validation IPI end-to-end | Azure SNO (~$1.50) | 🔄 In Progress |
 | **Phase 3** | Day-2 via SyncSets — Kyverno policies + RBAC | Azure SNO (même session) | 🔜 Planned |
 | **Phase 4** | ArgoCD ApplicationSet avec cluster generator | Azure SNO (même session) | 🔜 Planned |
 | **Phase 5** | Vault integration — Azure credentials + PKI | Homelab ($0) | 🔜 Planned |
@@ -578,7 +578,7 @@ Chaque phase dispose d'une documentation démo détaillée avec screenshots :
 | Phase | Doc démo | Statut |
 |-------|---------|--------|
 | **Phase 1** — Hive Bootstrap | [docs/demo/phase1-hive-bootstrap.md](docs/demo/phase1-hive-bootstrap.md) | ✅ Complete |
-| **Phase 2** — ClusterDeployment Azure | [docs/demo/phase2-clusterdeployment.md](docs/demo/phase2-clusterdeployment.md) | 🔜 Planned |
+| **Phase 2** — ClusterDeployment Azure | [docs/demo/phase2-clusterdeployment.md](docs/demo/phase2-clusterdeployment.md) | 🔄 In Progress |
 | **Phase 3** — SyncSets Day-2 | [docs/demo/phase3-syncsets.md](docs/demo/phase3-syncsets.md) | 🔜 Planned |
 | **Phase 4** — ArgoCD ApplicationSet | [docs/demo/phase4-applicationset.md](docs/demo/phase4-applicationset.md) | 🔜 Planned |
 | **Phase 5** — Vault Integration | [docs/demo/phase5-vault-integration.md](docs/demo/phase5-vault-integration.md) | 🔜 Planned |

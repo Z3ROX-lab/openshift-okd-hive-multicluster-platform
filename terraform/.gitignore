@@ -1,0 +1,14 @@
+# Dossier provider binaries — jamais dans Git
+.terraform/
+
+# State files — contiennent des données sensibles
+terraform.tfstate
+terraform.tfstate.backup
+
+# Variables sensibles — jamais dans Git
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+.env
+
+# NB: .terraform.lock.hcl doit être dans Git ✅
