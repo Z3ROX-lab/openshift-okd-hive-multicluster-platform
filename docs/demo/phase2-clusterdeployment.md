@@ -86,6 +86,196 @@ rm -f /tmp/hive-sp.json
 
 ---
 
+
+---
+
+## Comprendre les 3 manifests Hive
+
+Avant de créer les manifests, voilà pourquoi on en a besoin de 3 et ce que chacun fait.
+
+### Vue d'ensemble
+
+```
+OBJECTIF :
+  Dire à Hive : "Provisionne un cluster OKD SNO sur Azure"
+
+Hive a besoin de 3 informations :
+  1. Quelle image OKD utiliser ?      → ClusterImageSet
+  2. Comment configurer le cluster ?  → InstallConfig Secret
+  3. Quel cluster créer où ?          → ClusterDeployment
+```
+
+---
+
+### Manifest 1 — ClusterImageSet
+
+```
+C'est quoi ?
+─────────────
+Un "catalogue" qui dit à Hive :
+"Pour créer un cluster OKD, utilise cette image release"
+
+apiVersion: hive.openshift.io/v1
+kind: ClusterImageSet
+metadata:
+  name: okd-4.15
+spec:
+  releaseImage: quay.io/okd/scos-release:4.15...
+                ↑
+                Image OKD complète qui contient TOUT :
+                  ├── kube-apiserver
+                  ├── etcd
+                  ├── kubelet
+                  ├── OVN networking
+                  └── tous les operators OKD
+
+Analogie : ClusterImageSet = le DVD d'installation
+           "Installe OKD avec ce DVD"
+
+Réutilisable : 1 seul ClusterImageSet pour N clusters ✅
+```
+
+---
+
+### Manifest 2 — InstallConfig Secret
+
+```
+C'est quoi ?
+─────────────
+La configuration du cluster à installer.
+C'est EXACTEMENT le fichier install-config.yaml
+qu'openshift-install utilise — mis dans un Secret
+Kubernetes pour que Hive puisse le lire.
+
+Contenu :
+  ├── baseDomain: hive.okd.lab        ← DNS zone Azure
+  ├── clusterName: spoke-1            ← nom du cluster
+  ├── platform: azure
+  │    ├── region: westeurope
+  │    └── resourceGroup: rg-hive-multicluster
+  ├── controlPlane:
+  │    ├── replicas: 1                ← SNO = 1 seul master
+  │    └── type: Standard_D8s_v3     ← taille VM (ON-DEMAND !)
+  └── networking: OVNKubernetes
+
+Analogie : InstallConfig = formulaire de configuration
+           "Je veux OKD en SNO, région westeurope,
+            VM D8s_v3, nom spoke-1..."
+
+Spécifique : 1 InstallConfig par cluster
+```
+
+---
+
+### Manifest 3 — ClusterDeployment
+
+```
+C'est quoi ?
+─────────────
+LE manifest principal — il déclenche tout !
+
+Il dit à Hive :
+  "Crée un cluster OKD avec
+   cette image (ClusterImageSet) +
+   cette config (InstallConfig) +
+   ces credentials Azure (Secret azure-creds)"
+
+spec:
+  platform:
+    azure:
+      credentialsSecretRef:
+        name: azure-creds       ← SP Azure créé en Phase 2
+  provisioning:
+    imageSetRef:
+      name: okd-4.15            ← ClusterImageSet
+    installConfigSecretRef:
+      name: install-config      ← InstallConfig
+
+Analogie : ClusterDeployment = bon de commande
+           "Je veux ce cluster (InstallConfig),
+            avec ce DVD (ImageSet),
+            payé avec cette carte (azure-creds)"
+```
+
+---
+
+### Pourquoi 3 manifests séparés ?
+
+```
+SÉPARATION DES RESPONSABILITÉS :
+
+ClusterImageSet     → réutilisable par N clusters
+                      1 seul ImageSet pour tous les spokes ✅
+
+InstallConfig       → spécifique à 1 cluster
+                      nom, taille VM, région...
+
+ClusterDeployment   → l'orchestrateur
+                      assemble tout et crée le cluster
+
+AVANTAGE — créer spoke-2 :
+  ├── Même ClusterImageSet ✅ (déjà là)
+  ├── Nouveau InstallConfig (name: spoke-2)
+  └── Nouveau ClusterDeployment
+```
+
+---
+
+### Ce qui se passe après `oc apply -f clusterdeployment.yaml`
+
+```
+oc apply -f clusterdeployment.yaml
+         │
+         ▼
+hiveadmission valide le CR
+  "credentials OK ? format correct ?"
+         │
+         ▼
+hive-controllers détecte le nouveau CR
+         │
+         ▼
+Crée un pod éphémère :
+  hive-install-manager-okd-sno-spoke
+         │
+         ├── Pull image OKD depuis quay.io (tinyproxy)
+         ├── Génère les manifests install
+         ├── Appelle Azure API :
+         │    ├── Crée VNet/Subnet/NSG
+         │    ├── Crée Load Balancer public
+         │    └── Lance VM master Standard_D8s_v3
+         │
+         ▼
+VM Azure booter avec FCOS + Ignition (~45 min)
+         │
+         ▼
+Cluster OKD SNO spoke prêt ✅
+         │
+         ▼
+hive-controllers crée automatiquement :
+  Secret "okd-sno-spoke-admin-kubeconfig"
+  └── label: argocd.argoproj.io/secret-type: cluster
+       └── ArgoCD détecte → spoke enregistré ✅
+            └── ApplicationSet déploie les apps (Phase 4)
+```
+
+---
+
+### quay.io vs Harbor — lequel utilise-t-on ?
+
+```
+Harbor (homelab)    → images pour les pods du HUB
+                      ArgoCD, Vault, Kyverno...
+                      cluster airgap homelab ✅
+
+quay.io (internet)  → image OKD release pour le SPOKE
+                      Le spoke Azure a accès internet ✅
+                      Hub accède quay.io via tinyproxy ✅
+
+→ ClusterImageSet pointe vers quay.io ✅
+```
+
+---
+
 ## Étape 1 — Infra Azure via Terraform
 
 ### Pourquoi Terraform et pas az CLI ?
@@ -171,8 +361,16 @@ terraform apply
 
 ### Screenshot 2 — Terraform Apply
 
-> 📸 `docs/screenshots/phase2-terraform-apply.png`
-> *À compléter après apply*
+![Phase 2 - Terraform Apply](../screenshots/phase2-terraform-apply.png)
+
+**Commande :** `terraform apply`
+
+Ce screenshot montre :
+- `Apply complete! Resources: 2 added, 0 changed, 0 destroyed` ✅
+- `dns_zone_name = "hive.okd.lab"` ✅
+- `dns_zone_name_servers` → 4 name servers Azure (ns1→ns4-03.azure-dns.*) ✅
+- `resource_group_name = "rg-hive-multicluster"` ✅
+- Subscription ID masquée dans le resource_group_id ✅
 
 ---
 
