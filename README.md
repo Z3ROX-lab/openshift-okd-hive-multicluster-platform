@@ -305,7 +305,8 @@ openshift-okd-hive-multicluster-platform/
 │   │   ├── ADR-002-hypershift-multiplatform-ha.md
 │   │   ├── ADR-003-hive-provisioning-methods.md
 │   │   ├── ADR-004-iam-strategy-keycloak.md
-│   │   └── ADR-005-oidc-brokering-dex-vs-direct.md
+│   │   ├── ADR-005-oidc-brokering-dex-vs-direct.md
+│   │   └── ADR-006-network-hub-spoke-azure.md
 │   ├── argocd-components.md
 │   ├── adr/
 │   │   ├── ADR-001 → ADR-005
@@ -345,6 +346,13 @@ openshift-okd-hive-multicluster-platform/
 ├── applicationsets/
 │   └── multicluster-apps.yaml
 │
+├── terraform/
+│   ├── .gitignore
+│   ├── .terraform.lock.hcl
+│   ├── main.tf              ← Resource Group + DNS Zone Azure
+│   ├── variables.tf
+│   └── outputs.tf
+│
 ├── vault/
 │   └── policies/
 │       └── hive-azure-policy.hcl
@@ -374,6 +382,44 @@ OKD release images                    NetworkPolicies (via SyncSets)
 
 ---
 
+
+
+## 🌐 Matrice de flux réseau — Hub Homelab → Spoke Azure
+
+> Voir [ADR-006 — Network Hub↔Spoke Azure](docs/adr/ADR-006-network-hub-spoke-azure.md) pour l'analyse complète.
+
+### Flux réseau par composant
+
+| Source | Destination | Port | Protocole | Phase | Requis |
+|--------|------------|------|-----------|-------|--------|
+| `hive-install-manager` (hub) | `management.azure.com` | 443 | HTTPS via tinyproxy | Provisioning | ✅ |
+| `hive-install-manager` (hub) | `quay.io` | 443 | HTTPS via tinyproxy | Provisioning | ✅ |
+| `hive-install-manager` (hub) | `spoke API LB` (Azure) | 6443 | HTTPS | Provisioning | ✅ |
+| `hive-clustersync` (hub) | `spoke API LB` (Azure) | 6443 | HTTPS | Day-2 SyncSets | ✅ |
+| `hive-controllers` (hub) | `spoke API LB` (Azure) | 6443 | HTTPS | Reconcile loop | ✅ |
+| `argocd-application-controller` (hub) | `spoke API LB` (Azure) | 6443 | HTTPS | ApplicationSet | ✅ |
+| `spoke VM` (Azure) | `quay.io` | 443 | HTTPS | Bootstrap | ✅ |
+| `spoke VM` (Azure) | `keycloak.apps.sno.okd.lab` (hub) | 443 | HTTPS | SSO OAuth | ✅ |
+| `spoke VM` (Azure) | `hub API` (homelab) | - | - | - | ❌ Non requis |
+
+### Pourquoi Hive ≠ HyperShift sur Azure
+
+```
+HYPERSHIFT ❌                        HIVE SNO ✅
+─────────────                        ──────────
+Azure workers                        Hub homelab
+  └── doivent joindre                  └── appelle Azure API (sortant)
+       CP sur hub homelab                   crée VM spoke Azure
+       via Azure LB public                       │
+            │                                    ▼
+            ▼                              Spoke SNO Azure
+       Azure LB → 192.168.241.10           └── CP sur Azure VMs ✅
+       ❌ BLOQUÉ                                 autonome ✅
+       (LB public ne route                       hub n'a rien
+        pas vers IP privée)                      à exposer ✅
+```
+
+---
 
 ## ⚙️ Hive — Composants, CRDs et pattern Operator/Controller
 
@@ -626,7 +672,7 @@ Chaque phase dispose d'une documentation démo détaillée avec screenshots :
 | [`okd-hypershift-security-platform`](https://github.com/Z3ROX-lab/okd-hypershift-security-platform) | HyperShift — Hosted Control Planes sur Azure (companion) |
 | [`okd-sno-supply-chain`](https://github.com/Z3ROX-lab/okd-sno-supply-chain) | Supply chain security (Cosign + Trivy + Harbor) |
 | [`ai-security-platform`](https://github.com/Z3ROX-lab/ai-security-platform) | AI Security Platform on K3d |
-| [`docs/adr/`](docs/adr/) | ADR-001→005 : Hive vs HyperShift, HyperShift HA, Hive Provisioning, IAM Keycloak, OIDC Brokering |
+| [`docs/adr/`](docs/adr/) | ADR-001→006 : Hive vs HyperShift, HyperShift HA, Hive Provisioning, IAM Keycloak, OIDC Brokering, Network Hub↔Spoke |
 | [`docs/argocd-components.md`](docs/argocd-components.md) | ArgoCD components, Dex SSO flow, cluster targeting, spoke SSO patterns |
 
 ---
