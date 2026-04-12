@@ -1,0 +1,6 @@
+apiVersion: hive.openshift.io/v1
+kind: ClusterImageSet
+metadata:
+  name: okd-4.15
+spec:
+  releaseImage: quay.io/openshift/okd@sha256:46b462be1e4c15ce5ab5fba97e713e8824bbb9f614ac5abe1be41fda916920cc

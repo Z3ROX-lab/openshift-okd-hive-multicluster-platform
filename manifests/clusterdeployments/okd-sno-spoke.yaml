@@ -1,0 +1,26 @@
+apiVersion: hive.openshift.io/v1
+kind: ClusterDeployment
+metadata:
+  name: okd-sno-spoke
+  namespace: hive
+  labels:
+    spoke: "true"
+    env: validation
+spec:
+  baseDomain: hive.okd.lab
+  clusterName: spoke-1
+  platform:
+    azure:
+      credentialsSecretRef:
+        name: azure-creds
+      region: westeurope
+      baseDomainResourceGroupName: rg-hive-multicluster
+  provisioning:
+    imageSetRef:
+      name: okd-4.15
+    installConfigSecretRef:
+      name: okd-sno-spoke-install-config
+    sshPrivateKeySecretRef:
+      name: okd-sno-spoke-ssh-key
+  pullSecretRef:
+    name: okd-pull-secret

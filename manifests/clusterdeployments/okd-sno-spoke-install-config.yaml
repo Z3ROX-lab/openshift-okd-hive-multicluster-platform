@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: okd-sno-spoke-install-config
+  namespace: hive
+stringData:
+  install-config.yaml: |
+    apiVersion: v1
+    baseDomain: hive.okd.lab
+    metadata:
+      name: spoke-1
+    compute:
+    - name: worker
+      replicas: 0
+    controlPlane:
+      name: master
+      replicas: 1
+      platform:
+        azure:
+          type: Standard_D8s_v3
+          osDisk:
+            diskSizeGB: 128
+            diskType: Premium_LRS
+    networking:
+      clusterNetwork:
+      - cidr: 10.128.0.0/14
+        hostPrefix: 23
+      networkType: OVNKubernetes
+      serviceNetwork:
+      - 172.30.0.0/16
+      machineNetwork:
+      - cidr: 10.0.0.0/16
+    platform:
+      azure:
+        baseDomainResourceGroupName: rg-hive-multicluster
+        region: westeurope
+        cloudName: AzurePublicCloud
+    pullSecret: '{"auths":{"fake":{"auth":"aWQ6cGFzcwo="}}}'
+    sshKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICH2eKPtP+rFh/XfAJfz/ZdQU4kZrF4X6ut+/VXOXnko hive-spoke"
